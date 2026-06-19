@@ -19,7 +19,7 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/mechano-transformer/PAMC-204"
+Homepage = "https://github.com/mechano-transformer/pypamc-204"
 PyPI = "https://pypi.org/project/pypamc-204/"
 
 [tool.setuptools.packages.find]

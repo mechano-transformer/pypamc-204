@@ -198,21 +198,50 @@ password = pypi-ここにテスト用トークンを貼る
 
 ---
 
-## クイックリファレンス（全手順まとめ）
+## GitHub Actions による自動公開（推奨）
+
+APIトークンの管理が不要な **Trusted Publisher（OIDC）** 方式です。
+GitHub Release を作成するだけで PyPI に自動公開されます。
+
+### 事前設定（初回のみ）
+
+1. https://pypi.org/manage/project/pypamc-204/settings/publishing/ を開く
+2. 「Add a new publisher」に以下を入力して保存：
+
+| 項目 | 値 |
+|------|-----|
+| Owner | `mechano-transformer` |
+| Repository name | `pypamc-204` |
+| Workflow name | `publish.yml` |
+| Environment name | （空欄のまま） |
+
+### リリース手順
+
+1. `pyproject.toml` と `src/pypamc204/__init__.py` のバージョンを更新する
+2. 変更をコミット・push する
+3. GitHub 上で Release を作成する（タグ例: `v0.2.0`）
+4. `publish.yml` が自動で起動し、ビルド → PyPI 公開が行われる
+
+> トークンの発行・管理・ローテーションは一切不要です。
+> GitHub と PyPI が OIDC で直接認証します。
+
+---
+
+## クイックリファレンス
+
+### 手動公開（twine）
 
 ```bash
-# 1. ツール準備
 pip install build twine
-
-# 2. ビルド
 python -m build
-
-# 3. チェック
 twine check dist/*
-
-# 4. テスト環境にアップロード（任意）
-twine upload --repository testpypi dist/*
-
-# 5. 本番にアップロード
 twine upload dist/*
+```
+
+### 自動公開（GitHub Actions）
+
+```
+1. バージョン更新 → commit → push
+2. GitHub で Release 作成
+3. 自動で PyPI に公開される
 ```

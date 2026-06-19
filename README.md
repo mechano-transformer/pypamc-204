@@ -2,12 +2,12 @@
 
 [![PyPI](https://img.shields.io/pypi/v/pypamc-204)](https://pypi.org/project/pypamc-204/)
 [![Python](https://img.shields.io/pypi/pyversions/pypamc-204)](https://pypi.org/project/pypamc-204/)
-[![テスト](https://github.com/mechano-transformer/PAMC-204/actions/workflows/test.yml/badge.svg)](https://github.com/mechano-transformer/PAMC-204/actions/workflows/test.yml)
+[![テスト](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml/badge.svg)](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml)
 
 PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラ用 Python ライブラリ
 
 - **PyPI:** https://pypi.org/project/pypamc-204/
-- **GitHub:** https://github.com/mechano-transformer/PAMC-204
+- **GitHub:** https://github.com/mechano-transformer/pypamc-204
 
 ## インストール
 
@@ -32,7 +32,7 @@ pip install -e .
 ### 1. リポジトリをクローン
 
 ```bash
-git clone https://github.com/mechano-transformer/PAMC-204.git
+git clone https://github.com/mechano-transformer/pypamc-204.git
 cd pypamc-204
 ```
 

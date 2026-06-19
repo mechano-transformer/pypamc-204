@@ -70,7 +70,7 @@ GitHub Release を作成した際に、パッケージを自動ビルドして P
 | 項目 | 値 |
 |---|---|
 | Owner | `mechano-transformer` |
-| Repository name | `PAMC-204` |
+| Repository name | `pypamc-204` |
 | Workflow name | `publish.yml` |
 | Environment | （空欄のまま） |
 
