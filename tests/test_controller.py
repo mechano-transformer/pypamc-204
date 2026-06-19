@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 import serial
 
 from pypamc204 import PAMC204
+from pypamc204.controller import _strip_prompt
 from pypamc204.exceptions import (
     BusyError,
     CommandError,
@@ -24,13 +25,41 @@ def make_controller(address=1):
 
 
 def set_response(ctrl, response_text):
-    """モックのレスポンスを設定する"""
+    """モックのレスポンスを設定する（単一行）"""
     ctrl._ser.readline.return_value = (response_text + "\r\n").encode("ascii")
+
+
+def set_multi_response(ctrl, lines):
+    """モックの複数行レスポンスを設定する"""
+    encoded = [(line + "\r\n").encode("ascii") for line in lines] + [b""]
+    ctrl._ser.readline.side_effect = encoded
 
 
 def set_no_response(ctrl):
     """レスポンスなし（タイムアウト）を設定する"""
     ctrl._ser.readline.return_value = b""
+
+
+class TestStripPrompt(unittest.TestCase):
+    """レスポンスの '>' プレフィックス除去"""
+
+    def test_strip_leading_bracket(self):
+        self.assertEqual(_strip_prompt(">E01OK"), "E01OK")
+
+    def test_strip_leading_bracket_number(self):
+        self.assertEqual(_strip_prompt(">1000"), "1000")
+
+    def test_no_bracket(self):
+        self.assertEqual(_strip_prompt("E01OK"), "E01OK")
+
+    def test_empty_after_bracket(self):
+        self.assertEqual(_strip_prompt(">"), "")
+
+    def test_empty_string(self):
+        self.assertEqual(_strip_prompt(""), "")
+
+    def test_multiple_brackets(self):
+        self.assertEqual(_strip_prompt(">>test"), ">test")
 
 
 class TestConnection(unittest.TestCase):
@@ -72,6 +101,28 @@ class TestConnection(unittest.TestCase):
         ctrl = PAMC204("COM3")
         with self.assertRaises(ConnectionError):
             ctrl._recv()
+
+
+class TestRecvStripsPrompt(unittest.TestCase):
+    """_recv() が '>' プレフィックスを除去するテスト"""
+
+    def test_recv_strips_prompt(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        result = ctrl._recv()
+        self.assertEqual(result, "E01OK")
+
+    def test_recv_strips_prompt_number(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">1000")
+        result = ctrl._recv()
+        self.assertEqual(result, "1000")
+
+    def test_recv_no_prompt(self):
+        ctrl = make_controller()
+        set_response(ctrl, "E01OK")
+        result = ctrl._recv()
+        self.assertEqual(result, "E01OK")
 
 
 class TestValidation(unittest.TestCase):
@@ -136,62 +187,81 @@ class TestErrorHandling(unittest.TestCase):
         ctrl = make_controller()
         set_response(ctrl, "BUSY")
         with self.assertRaises(BusyError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_value_range_error(self):
         ctrl = make_controller()
         set_response(ctrl, "Error Value Range")
         with self.assertRaises(ValueRangeError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_command_error(self):
         ctrl = make_controller()
         set_response(ctrl, "ERROR")
         with self.assertRaises(CommandError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_error1(self):
         ctrl = make_controller()
         set_response(ctrl, "ERROR1")
         with self.assertRaises(CommandError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_error4(self):
         ctrl = make_controller()
         set_response(ctrl, "ERROR4")
         with self.assertRaises(CommandError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_error5(self):
         ctrl = make_controller()
         set_response(ctrl, "ERROR5")
         with self.assertRaises(CommandError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
     def test_timeout_error(self):
         ctrl = make_controller()
         set_no_response(ctrl)
         with self.assertRaises(TimeoutError):
-            ctrl.get_firmware_info()
+            ctrl.set_voltage(100)
 
 
 class TestFirmwareInfo(unittest.TestCase):
-    """ExxINF – ファームウェアバージョン確認"""
+    """INF – ファームウェアバージョン確認（マニュアル例: アドレスなしの INF）"""
 
-    def test_get_firmware_info(self):
+    def test_get_firmware_info_single_line(self):
+        """単一行レスポンス"""
         ctrl = make_controller()
-        set_response(ctrl, ">PAMC-NEWTYPE Ver:0.1.8(115200bps)")
+        set_multi_response(ctrl, [">PAMC-NEWTYPE Ver:0.1.8(115200bps)"])
         result = ctrl.get_firmware_info()
         sent = ctrl._ser.write.call_args[0][0]
-        self.assertEqual(sent, b"E01INF\r\n")
+        self.assertEqual(sent, b"INF\r\n")
         self.assertIn("0.1.8", result)
 
-    def test_get_firmware_info_address2(self):
-        ctrl = make_controller(address=2)
-        set_response(ctrl, ">PAMC-NEWTYPE Ver:0.1.8(115200bps)")
+    def test_get_firmware_info_multi_line(self):
+        """マニュアル通りの複数行レスポンス"""
+        ctrl = make_controller()
+        set_multi_response(ctrl, [">PAMC-NEWTYPE", "Ver:0.1.4(115200bps)"])
+        result = ctrl.get_firmware_info()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"INF\r\n")
+        self.assertIn("PAMC-NEWTYPE", result)
+        self.assertIn("Ver:0.1.4", result)
+
+    def test_get_firmware_info_timeout(self):
+        """レスポンスなしの場合"""
+        ctrl = make_controller()
+        set_no_response(ctrl)
+        with self.assertRaises(TimeoutError):
+            ctrl.get_firmware_info()
+
+    def test_get_firmware_info_sends_inf_not_exxinf(self):
+        """マニュアル例に従い、'INF' を送信する（'E01INF' ではない）"""
+        ctrl = make_controller(address=5)
+        set_multi_response(ctrl, [">PAMC-NEWTYPE Ver:0.1.8(115200bps)"])
         ctrl.get_firmware_info()
         sent = ctrl._ser.write.call_args[0][0]
-        self.assertEqual(sent, b"E02INF\r\n")
+        self.assertEqual(sent, b"INF\r\n")
 
 
 class TestPing(unittest.TestCase):
@@ -417,25 +487,37 @@ class TestHome(unittest.TestCase):
 
     def test_get_home(self):
         ctrl = make_controller()
-        set_response(ctrl, "1000")
+        set_response(ctrl, ">1000")
         result = ctrl.get_home(channel=1)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E011DH?\r\n")
         self.assertEqual(result, 1000)
 
+    def test_get_home_with_prompt_prefix(self):
+        """マニュアル例: E011DH? → >1000（'>'除去後に数値パース）"""
+        ctrl = make_controller()
+        set_response(ctrl, ">1000")
+        result = ctrl.get_home(channel=1)
+        self.assertEqual(result, 1000)
+
 
 class TestMotionDone(unittest.TestCase):
-    """ExxmMD? – 動作完了ステータス"""
+    """ExxmMD? – 動作完了ステータス（0:駆動中, 1:停止）"""
 
     def test_motion_done_stopped(self):
         ctrl = make_controller()
-        set_response(ctrl, "1")
+        set_response(ctrl, ">1")
         self.assertTrue(ctrl.is_motion_done(channel=1))
 
     def test_motion_done_moving(self):
         ctrl = make_controller()
-        set_response(ctrl, "0")
+        set_response(ctrl, ">0")
         self.assertFalse(ctrl.is_motion_done(channel=1))
+
+    def test_motion_done_without_prompt(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1")
+        self.assertTrue(ctrl.is_motion_done(channel=1))
 
 
 class TestMoveIndefinite(unittest.TestCase):
@@ -455,16 +537,16 @@ class TestMoveIndefinite(unittest.TestCase):
 
 
 class TestIsMoving(unittest.TestCase):
-    """ExxmMV? – 移動状況問い合わせ"""
+    """ExxmMV? – 移動状況問い合わせ（0:駆動中, 1:停止）"""
 
     def test_is_moving_true(self):
         ctrl = make_controller()
-        set_response(ctrl, "0")
+        set_response(ctrl, ">0")
         self.assertTrue(ctrl.is_moving(channel=1))
 
     def test_is_moving_false(self):
         ctrl = make_controller()
-        set_response(ctrl, "1")
+        set_response(ctrl, ">1")
         self.assertFalse(ctrl.is_moving(channel=1))
 
 
@@ -485,7 +567,7 @@ class TestMoveAbsolute(unittest.TestCase):
 
     def test_get_target_position(self):
         ctrl = make_controller()
-        set_response(ctrl, "15400")
+        set_response(ctrl, ">15400")
         result = ctrl.get_target_position(channel=1)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E011PA?\r\n")
@@ -509,7 +591,7 @@ class TestMoveRelative(unittest.TestCase):
 
     def test_get_relative_target(self):
         ctrl = make_controller()
-        set_response(ctrl, "1123")
+        set_response(ctrl, ">1123")
         result = ctrl.get_relative_target(channel=1)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E011PR?\r\n")
@@ -537,7 +619,7 @@ class TestGetPosition(unittest.TestCase):
 
     def test_get_position(self):
         ctrl = make_controller()
-        set_response(ctrl, "15400")
+        set_response(ctrl, ">15400")
         result = ctrl.get_position(channel=1)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E011TP?\r\n")
@@ -545,7 +627,7 @@ class TestGetPosition(unittest.TestCase):
 
     def test_get_position_negative(self):
         ctrl = make_controller()
-        set_response(ctrl, "-200")
+        set_response(ctrl, ">-200")
         result = ctrl.get_position(channel=2)
         self.assertEqual(result, -200)
 
@@ -573,11 +655,11 @@ class TestVelocity(unittest.TestCase):
 
     def test_get_velocity(self):
         ctrl = make_controller()
-        set_response(ctrl, "500")
+        set_response(ctrl, ">1")
         result = ctrl.get_velocity(channel=1)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E011VA?\r\n")
-        self.assertEqual(result, 500)
+        self.assertEqual(result, 1)
 
 
 class TestScanAddresses(unittest.TestCase):
@@ -601,22 +683,22 @@ class TestWaitUntilDone(unittest.TestCase):
 
     def test_wait_already_done(self):
         ctrl = make_controller()
-        set_response(ctrl, "1")
+        set_response(ctrl, ">1")
         result = ctrl.wait_until_done(channel=1, timeout=1.0)
         self.assertTrue(result)
 
     def test_wait_timeout(self):
         ctrl = make_controller()
-        set_response(ctrl, "0")
+        set_response(ctrl, ">0")
         result = ctrl.wait_until_done(channel=1, poll_interval=0.01, timeout=0.05)
         self.assertFalse(result)
 
     def test_wait_becomes_done(self):
         ctrl = make_controller()
         ctrl._ser.readline.side_effect = [
-            b"0\r\n",
-            b"0\r\n",
-            b"1\r\n",
+            b">0\r\n",
+            b">0\r\n",
+            b">1\r\n",
         ]
         result = ctrl.wait_until_done(channel=1, poll_interval=0.01, timeout=1.0)
         self.assertTrue(result)
@@ -631,7 +713,7 @@ class TestSendRaw(unittest.TestCase):
         result = ctrl.send_raw("E01INF")
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E01INF\r\n")
-        self.assertEqual(result, ">E01OK")
+        self.assertEqual(result, "E01OK")
 
     def test_send_raw_no_response(self):
         ctrl = make_controller()
@@ -646,16 +728,16 @@ class TestMultipleAddresses(unittest.TestCase):
     def test_address_32(self):
         ctrl = make_controller(address=32)
         set_response(ctrl, ">E32OK")
-        ctrl.get_firmware_info()
+        ctrl.set_voltage(100)
         sent = ctrl._ser.write.call_args[0][0]
-        self.assertEqual(sent, b"E32INF\r\n")
+        self.assertEqual(sent, b"E32DAC2700\r\n")
 
     def test_address_format_padding(self):
         ctrl = make_controller(address=5)
         set_response(ctrl, ">E05OK")
-        ctrl.get_firmware_info()
+        ctrl.set_voltage(100)
         sent = ctrl._ser.write.call_args[0][0]
-        self.assertEqual(sent, b"E05INF\r\n")
+        self.assertEqual(sent, b"E05DAC2700\r\n")
 
 
 if __name__ == "__main__":

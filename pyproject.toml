@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pypamc_204"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python driver for PAMC-204 / PAMC-204-RJ Piezo Assist Motor Controller"
 readme = "README.md"
 license = "MIT"

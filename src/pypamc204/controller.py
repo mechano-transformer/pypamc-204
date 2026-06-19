@@ -31,6 +31,13 @@ VOLTAGE_TABLE = {
 CHANNEL_MAP = {1: "A", 2: "B", 3: "C", 4: "D"}
 
 
+def _strip_prompt(text: str) -> str:
+    """レスポンス先頭の '>' プレフィックスを除去する"""
+    if text.startswith(">"):
+        return text[1:]
+    return text
+
+
 class PAMC204:
     """PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラのドライバクラス
 
@@ -39,7 +46,7 @@ class PAMC204:
     port : str
         シリアルポート名（例: ``"COM3"``、``"/dev/ttyUSB0"``）
     address : int
-        ドライバアドレス（1〜32）。デフォルトは1。
+        ドライバアドレス（E01〜E32）。デフォルトはE01。
     timeout : float
         シリアル受信タイムアウト（秒）。デフォルトは1.0。
     """
@@ -99,7 +106,7 @@ class PAMC204:
         self._ser.write((command + "\r\n").encode("ascii"))
 
     def _recv(self, timeout: Optional[float] = None) -> Optional[str]:
-        """1行受信する。タイムアウト時はNoneを返す。"""
+        """1行受信し、先頭の '>' を除去して返す。タイムアウト時はNoneを返す。"""
         if not self.is_open:
             raise ConnectionError("シリアルポートが開いていません。先にopen()を呼んでください。")
         old_timeout = self._ser.timeout
@@ -111,10 +118,21 @@ class PAMC204:
             self._ser.timeout = old_timeout
         if not line:
             return None
-        return line.decode("ascii", errors="replace").strip()
+        text = line.decode("ascii", errors="replace").strip()
+        return _strip_prompt(text)
+
+    def _recv_lines(self, max_lines: int = 10, timeout: Optional[float] = None) -> list[str]:
+        """複数行レスポンスを受信する。空行またはタイムアウトで終了。"""
+        lines = []
+        for _ in range(max_lines):
+            line = self._recv(timeout=timeout)
+            if line is None:
+                break
+            lines.append(line)
+        return lines
 
     def _send_recv(self, command: str, timeout: Optional[float] = None) -> str:
-        """コマンドを送信し、レスポンスを受信して返す"""
+        """コマンドを送信し、レスポンスを1行受信して返す"""
         self._send(command)
         resp = self._recv(timeout=timeout)
         if resp is None:
@@ -141,7 +159,7 @@ class PAMC204:
     @staticmethod
     def _validate_address(addr: int) -> None:
         if not 1 <= addr <= 32:
-            raise ValueError(f"アドレスは1〜32の範囲で指定してください（入力値: {addr}）")
+            raise ValueError(f"アドレスはE01〜E32の範囲で指定してください（入力値: {addr}）")
 
     @staticmethod
     def _validate_channel(ch: int) -> None:
@@ -154,18 +172,32 @@ class PAMC204:
             raise ValueError(f"周波数は1〜1500 Hzの範囲で指定してください（入力値: {freq}）")
 
     # ── 1. ExxINF – ファームウェアバージョン確認 ─────────────
+    # 構文: ExxINF
+    # 例:   INF → >PAMC-NEWTYPE\r\nVer:0.1.4(115200bps)
+    # 例ではアドレスなしの "INF" で送信。レスポンスは複数行の場合あり。
 
     def get_firmware_info(self) -> str:
         """ファームウェアバージョンを取得する
+
+        アドレスなしの ``INF`` コマンドを送信する。
+        レスポンスが複数行の場合は結合して返す。
 
         Returns
         -------
         str
             ドライバから返されたファームウェアバージョン文字列
         """
-        return self._send_recv(f"{self._addr()}INF")
+        self._send("INF")
+        lines = self._recv_lines(max_lines=5)
+        if not lines:
+            raise TimeoutError("コマンドに対するレスポンスなし: INF")
+        result = " ".join(lines)
+        self._check_error(result)
+        return result
 
     # ── 2. Exx – ドライバ存在確認 ────────────────────────────
+    # 構文: Exx  (Exx: E01~E32)
+    # 例:   E01 → >E01OK  /  E02 → (返事なし)
 
     def ping(self, address: Optional[int] = None) -> bool:
         """指定アドレスにドライバが存在するか確認する
@@ -189,6 +221,8 @@ class PAMC204:
         return "OK" in resp.upper()
 
     # ── 3. SETADDRxx – アドレス変更 ─────────────────────────
+    # 構文: SETADDRxx  (Exx: E01~E32)
+    # 例:   SETADDR02 → >SETADDR02
 
     def set_address(self, new_address: int) -> str:
         """ドライバのアドレスを変更する
@@ -196,7 +230,7 @@ class PAMC204:
         Parameters
         ----------
         new_address : int
-            新しいアドレス（1〜32）
+            新しいアドレス（E01〜E32）
 
         .. warning::
             単一ドライバ接続時のみ実行してください。
@@ -207,6 +241,8 @@ class PAMC204:
         return resp
 
     # ── 4. ExxDACnnnn – 出力電圧調整 ────────────────────────
+    # 構文: ExxDACnnnn  (Exx: E01~E32, nnnn: 1900~4095)
+    # 例:   E01DAC4095 → >E01OK
 
     def set_voltage(self, voltage: int) -> str:
         """出力電圧を設定する
@@ -230,6 +266,11 @@ class PAMC204:
         return self._send_recv(f"{self._addr()}DAC{dac_value}")
 
     # ── 5. ExxNR – 正回転駆動 ───────────────────────────────
+    # 構文: ExxNRnnnnyyyyz / ExxNRnnnnXyyyyyyz
+    #   Exx: E01~E32, nnnn: 0001~1500, yyyy: 0000~9999, yyyyyy: 000001~999999
+    #   z: A~D (A:CH1, B:CH2, C:CH3, D:CH4)
+    #   yyyy=0000 で連続駆動
+    # 例:   E01NR15001500A → >E01OK
 
     def rotate_forward(
         self,
@@ -256,6 +297,8 @@ class PAMC204:
         return self._send_recv(f"{self._addr()}{cmd}")
 
     # ── 6. ExxRR – 逆回転駆動 ───────────────────────────────
+    # 構文: ExxRRnnnnyyyyz / ExxRRnnnnXyyyyyyz（NRと同一形式）
+    # 例:   E01RR15001500A → >E01OK
 
     def rotate_reverse(
         self,
@@ -287,6 +330,8 @@ class PAMC204:
         raise ValueError(f"パルス数は0〜999999の範囲で指定してください（入力値: {pulses}）")
 
     # ── 7. ExxS – 連続駆動停止 ──────────────────────────────
+    # 構文: ExxS  (Exx: E01~E32)
+    # 例:   E01S → >E01FIN1456
 
     def stop(self) -> str:
         """連続駆動を停止し、駆動パルス数を含むレスポンスを返す
@@ -305,12 +350,16 @@ class PAMC204:
         return int(m.group(1)) if m else None
 
     # ── 8. ExxAB – モーション停止 ──────────────────────────
+    # 構文: ExxAB  (Exx: E01~E32)
+    # 例:   E01AB → レスポンスなし
 
     def abort(self) -> None:
         """全チャンネルのモーション即時停止（レスポンスなし）"""
         self._send(f"{self._addr()}AB")
 
     # ── 9. ExxmDHnnnn – ホームポジション設定 ─────────────────
+    # 構文: ExxmDHnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
+    # 例:   E011DH1000 → レスポンスなし
 
     def set_home(self, channel: int, position: int) -> None:
         """チャンネルのホームポジション（絶対位置）を設定する
@@ -326,6 +375,8 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}DH{position}")
 
     # ── 10. ExxmDH? – ホームポジション問い合わせ ─────────────
+    # 構文: ExxmDH?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011DH? → >1000
 
     def get_home(self, channel: int) -> int:
         """チャンネルのホームポジションを取得する"""
@@ -334,6 +385,8 @@ class PAMC204:
         return int(resp)
 
     # ── 11. ExxmMD? – 動作完了ステータス問い合わせ ────────────
+    # 構文: ExxmMD?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011MD? → >1（0:駆動中, 1:停止）
 
     def is_motion_done(self, channel: int) -> bool:
         """チャンネルの動作が完了しているか確認する
@@ -348,6 +401,8 @@ class PAMC204:
         return resp.strip() == "1"
 
     # ── 12. ExxmMVn – 無限移動 ─────────────────────────────
+    # 構文: ExxmMVn  (Exx: E01~E32, m: 1~4, n: +/-)
+    # 例:   E011MV+ → レスポンスなし
 
     def move_indefinite(self, channel: int, direction: str) -> None:
         """チャンネルのモーターを無限移動させる
@@ -365,6 +420,8 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}MV{direction}")
 
     # ── 13. ExxmMV? – 移動状況問い合わせ ─────────────────────
+    # 構文: ExxmMV?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011MV? → >1（0:駆動中, 1:停止）
 
     def is_moving(self, channel: int) -> bool:
         """チャンネルのモーターが移動中かどうか確認する
@@ -379,6 +436,8 @@ class PAMC204:
         return resp.strip() == "0"
 
     # ── 14. ExxmPAnnnn – 絶対位置移動 ──────────────────────
+    # 構文: ExxmPAnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
+    # 例:   E011PA1000 → レスポンスなし
 
     def move_absolute(self, channel: int, position: int) -> None:
         """モーターを絶対位置に移動させる
@@ -394,6 +453,9 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}PA{position}")
 
     # ── 15. ExxmPA? – 目標位置問い合わせ ─────────────────────
+    # 構文: ExxmPA?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011PA? → >15400
+    # 駆動中: 目標位置、停止中: 実位置
 
     def get_target_position(self, channel: int) -> int:
         """目標位置を取得する（駆動中: 目標位置、停止中: 実位置）"""
@@ -402,6 +464,8 @@ class PAMC204:
         return int(resp)
 
     # ── 16. ExxmPRnnnn – 相対位置移動 ──────────────────────
+    # 構文: ExxmPRnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
+    # 例:   E011PR1000 → レスポンスなし
 
     def move_relative(self, channel: int, steps: int) -> None:
         """現在位置から相対的にモーターを移動させる
@@ -417,6 +481,9 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}PR{steps}")
 
     # ── 17. ExxmPR? – 相対移動の目標位置問い合わせ ────────────
+    # 構文: ExxmPR?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011PR? → >15400
+    # 駆動中: 目標位置、停止中: 実位置
 
     def get_relative_target(self, channel: int) -> int:
         """相対移動の目標位置を取得する（駆動中: 目標位置、停止中: 実位置）"""
@@ -425,6 +492,8 @@ class PAMC204:
         return int(resp)
 
     # ── 18. ExxmST – チャンネル動作停止 ─────────────────────
+    # 構文: ExxmST  (Exx: E01~E32, m: 1~4)
+    # 例:   E011ST → レスポンスなし
 
     def stop_channel(self, channel: int) -> None:
         """指定チャンネルのモーション停止（レスポンスなし）"""
@@ -432,6 +501,8 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}ST")
 
     # ── 19. ExxmTP? – 実位置問い合わせ ──────────────────────
+    # 構文: ExxmTP?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011TP? → >15400
 
     def get_position(self, channel: int) -> int:
         """チャンネルの実際の現在位置を取得する"""
@@ -440,6 +511,8 @@ class PAMC204:
         return int(resp)
 
     # ── 20. ExxmVAnnnn – 速度設定 ──────────────────────────
+    # 構文: ExxmVAnnnn  (Exx: E01~E32, m: 1~4, nnnn: 1~1500)
+    # 例:   E011VA1 → レスポンスなし
 
     def set_velocity(self, channel: int, velocity: int) -> None:
         """チャンネルの速度を設定する
@@ -457,6 +530,8 @@ class PAMC204:
         self._send(f"{self._addr()}{channel}VA{velocity}")
 
     # ── 21. ExxmVA? – 速度問い合わせ ────────────────────────
+    # 構文: ExxmVA?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011VA? → >1
 
     def get_velocity(self, channel: int) -> int:
         """チャンネルの現在の速度設定を取得する（steps/sec）"""
@@ -467,7 +542,7 @@ class PAMC204:
     # ── 便利メソッド ─────────────────────────────────────────
 
     def scan_addresses(self) -> list[int]:
-        """全アドレス（1〜32）をスキャンし、応答のあるアドレスのリストを返す"""
+        """全アドレス（E01〜E32）をスキャンし、応答のあるアドレスのリストを返す"""
         found = []
         for addr in range(1, 33):
             if self.ping(addr):
@@ -505,6 +580,6 @@ class PAMC204:
             time.sleep(poll_interval)
 
     def send_raw(self, command: str) -> Optional[str]:
-        """生のコマンド文字列を送信し、レスポンスを返す"""
+        """生のコマンド文字列を送信し、レスポンスを返す（'>'プレフィックスは除去済み）"""
         self._send(command)
         return self._recv()
