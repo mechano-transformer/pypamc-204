@@ -20,6 +20,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/mechano-transformer/PAMC-204"
+PyPI = "https://pypi.org/project/pypamc-204/"
 
 [tool.setuptools.packages.find]
 where = ["src"]
