@@ -1,0 +1,662 @@
+"""PAMC204コントローラのユニットテスト"""
+
+import unittest
+from unittest.mock import MagicMock, patch, PropertyMock
+
+import serial
+
+from pypamc204 import PAMC204
+from pypamc204.exceptions import (
+    BusyError,
+    CommandError,
+    ConnectionError,
+    TimeoutError,
+    ValueRangeError,
+)
+
+
+def make_controller(address=1):
+    """モック済みのコントローラインスタンスを生成する"""
+    with patch("pypamc204.controller.serial.Serial"):
+        ctrl = PAMC204("COM3", address=address)
+        ctrl.open()
+        return ctrl
+
+
+def set_response(ctrl, response_text):
+    """モックのレスポンスを設定する"""
+    ctrl._ser.readline.return_value = (response_text + "\r\n").encode("ascii")
+
+
+def set_no_response(ctrl):
+    """レスポンスなし（タイムアウト）を設定する"""
+    ctrl._ser.readline.return_value = b""
+
+
+class TestConnection(unittest.TestCase):
+    """接続管理のテスト"""
+
+    @patch("pypamc204.controller.serial.Serial")
+    def test_open_close(self, mock_serial_cls):
+        ctrl = PAMC204("COM3")
+        ctrl.open()
+        mock_serial_cls.assert_called_once_with(
+            port="COM3",
+            baudrate=115200,
+            bytesize=8,
+            parity="N",
+            stopbits=1,
+            timeout=1.0,
+        )
+        ctrl.close()
+        ctrl._ser.close.assert_called_once()
+
+    @patch("pypamc204.controller.serial.Serial")
+    def test_context_manager(self, mock_serial_cls):
+        with PAMC204("COM3") as ctrl:
+            self.assertTrue(ctrl.is_open)
+        ctrl._ser.close.assert_called_once()
+
+    @patch("pypamc204.controller.serial.Serial", side_effect=serial.SerialException("port error"))
+    def test_open_failure(self, mock_serial_cls):
+        ctrl = PAMC204("COM99")
+        with self.assertRaises(ConnectionError):
+            ctrl.open()
+
+    def test_send_without_open(self):
+        ctrl = PAMC204("COM3")
+        with self.assertRaises(ConnectionError):
+            ctrl._send("E01INF")
+
+    def test_recv_without_open(self):
+        ctrl = PAMC204("COM3")
+        with self.assertRaises(ConnectionError):
+            ctrl._recv()
+
+
+class TestValidation(unittest.TestCase):
+    """バリデーションのテスト"""
+
+    def test_address_range(self):
+        with self.assertRaises(ValueError):
+            PAMC204("COM3", address=0)
+        with self.assertRaises(ValueError):
+            PAMC204("COM3", address=33)
+        PAMC204("COM3", address=1)
+        PAMC204("COM3", address=32)
+
+    def test_channel_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.rotate_forward(channel=0, frequency=100)
+        with self.assertRaises(ValueError):
+            ctrl.rotate_forward(channel=5, frequency=100)
+
+    def test_frequency_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.rotate_forward(channel=1, frequency=0)
+        with self.assertRaises(ValueError):
+            ctrl.rotate_forward(channel=1, frequency=1501)
+
+    def test_pulse_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.rotate_forward(channel=1, frequency=100, pulses=1000000)
+
+    def test_voltage_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.set_voltage(75)
+
+    def test_voltage_raw_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.set_voltage_raw(1899)
+        with self.assertRaises(ValueError):
+            ctrl.set_voltage_raw(4096)
+
+    def test_velocity_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.set_velocity(channel=1, velocity=0)
+        with self.assertRaises(ValueError):
+            ctrl.set_velocity(channel=1, velocity=1501)
+
+    def test_direction_validation(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.move_indefinite(channel=1, direction="x")
+
+
+class TestErrorHandling(unittest.TestCase):
+    """エラーレスポンスのテスト"""
+
+    def test_busy_error(self):
+        ctrl = make_controller()
+        set_response(ctrl, "BUSY")
+        with self.assertRaises(BusyError):
+            ctrl.get_firmware_info()
+
+    def test_value_range_error(self):
+        ctrl = make_controller()
+        set_response(ctrl, "Error Value Range")
+        with self.assertRaises(ValueRangeError):
+            ctrl.get_firmware_info()
+
+    def test_command_error(self):
+        ctrl = make_controller()
+        set_response(ctrl, "ERROR")
+        with self.assertRaises(CommandError):
+            ctrl.get_firmware_info()
+
+    def test_error1(self):
+        ctrl = make_controller()
+        set_response(ctrl, "ERROR1")
+        with self.assertRaises(CommandError):
+            ctrl.get_firmware_info()
+
+    def test_error4(self):
+        ctrl = make_controller()
+        set_response(ctrl, "ERROR4")
+        with self.assertRaises(CommandError):
+            ctrl.get_firmware_info()
+
+    def test_error5(self):
+        ctrl = make_controller()
+        set_response(ctrl, "ERROR5")
+        with self.assertRaises(CommandError):
+            ctrl.get_firmware_info()
+
+    def test_timeout_error(self):
+        ctrl = make_controller()
+        set_no_response(ctrl)
+        with self.assertRaises(TimeoutError):
+            ctrl.get_firmware_info()
+
+
+class TestFirmwareInfo(unittest.TestCase):
+    """ExxINF – ファームウェアバージョン確認"""
+
+    def test_get_firmware_info(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">PAMC-NEWTYPE Ver:0.1.8(115200bps)")
+        result = ctrl.get_firmware_info()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01INF\r\n")
+        self.assertIn("0.1.8", result)
+
+    def test_get_firmware_info_address2(self):
+        ctrl = make_controller(address=2)
+        set_response(ctrl, ">PAMC-NEWTYPE Ver:0.1.8(115200bps)")
+        ctrl.get_firmware_info()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E02INF\r\n")
+
+
+class TestPing(unittest.TestCase):
+    """Exx – ドライバ存在確認"""
+
+    def test_ping_success(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        self.assertTrue(ctrl.ping())
+
+    def test_ping_no_response(self):
+        ctrl = make_controller()
+        set_no_response(ctrl)
+        self.assertFalse(ctrl.ping())
+
+    def test_ping_other_address(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E05OK")
+        self.assertTrue(ctrl.ping(address=5))
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E05\r\n")
+
+    def test_ping_invalid_address(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.ping(address=0)
+
+
+class TestSetAddress(unittest.TestCase):
+    """SETADDRxx – アドレス変更"""
+
+    def test_set_address(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">SETADDR05")
+        ctrl.set_address(5)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"SETADDR05\r\n")
+        self.assertEqual(ctrl.address, 5)
+
+    def test_set_address_invalid(self):
+        ctrl = make_controller()
+        with self.assertRaises(ValueError):
+            ctrl.set_address(0)
+        with self.assertRaises(ValueError):
+            ctrl.set_address(33)
+
+
+class TestVoltage(unittest.TestCase):
+    """ExxDACnnnn – 出力電圧調整"""
+
+    def test_set_voltage_150(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.set_voltage(150)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01DAC4095\r\n")
+
+    def test_set_voltage_100(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.set_voltage(100)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01DAC2700\r\n")
+
+    def test_set_voltage_70(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.set_voltage(70)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01DAC1900\r\n")
+
+    def test_set_voltage_all_values(self):
+        ctrl = make_controller()
+        expected = {
+            70: 1900, 80: 2200, 90: 2450, 100: 2700,
+            110: 3000, 120: 3200, 130: 3450, 140: 3750, 150: 4095,
+        }
+        for voltage, dac in expected.items():
+            set_response(ctrl, ">E01OK")
+            ctrl.set_voltage(voltage)
+            sent = ctrl._ser.write.call_args[0][0]
+            self.assertEqual(sent, f"E01DAC{dac}\r\n".encode("ascii"))
+
+    def test_set_voltage_raw(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.set_voltage_raw(3000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01DAC3000\r\n")
+
+
+class TestRotation(unittest.TestCase):
+    """ExxNR / ExxRR – 正回転・逆回転駆動"""
+
+    def test_forward_with_pulses(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=1500, pulses=1500)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR15001500A\r\n")
+
+    def test_forward_continuous(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=1500, pulses=0)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR15000000A\r\n")
+
+    def test_forward_extended_pulses(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=1500, pulses=100000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR1500X100000A\r\n")
+
+    def test_forward_channel_mapping(self):
+        ctrl = make_controller()
+        channels = {1: "A", 2: "B", 3: "C", 4: "D"}
+        for ch_num, ch_letter in channels.items():
+            set_response(ctrl, ">E01OK")
+            ctrl.rotate_forward(channel=ch_num, frequency=500, pulses=100)
+            sent = ctrl._ser.write.call_args[0][0]
+            expected = f"E01NR05000100{ch_letter}\r\n".encode("ascii")
+            self.assertEqual(sent, expected)
+
+    def test_reverse_with_pulses(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_reverse(channel=2, frequency=800, pulses=2000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01RR08002000B\r\n")
+
+    def test_reverse_continuous(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_reverse(channel=3, frequency=1000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01RR10000000C\r\n")
+
+    def test_reverse_extended_pulses(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_reverse(channel=1, frequency=1500, pulses=100000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01RR1500X100000A\r\n")
+
+    def test_forward_min_frequency(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=1, pulses=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR00010001A\r\n")
+
+    def test_forward_max_pulses_standard(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=100, pulses=9999)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR01009999A\r\n")
+
+    def test_forward_max_pulses_extended(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        ctrl.rotate_forward(channel=1, frequency=100, pulses=999999)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01NR0100X999999A\r\n")
+
+
+class TestStop(unittest.TestCase):
+    """ExxS – 連続駆動停止"""
+
+    def test_stop(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01FIN1456")
+        result = ctrl.stop()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01S\r\n")
+        self.assertIn("FIN", result)
+
+    def test_get_stop_pulse_count(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01FIN1456")
+        count = ctrl.get_stop_pulse_count()
+        self.assertEqual(count, 1456)
+
+    def test_get_stop_pulse_count_zero(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01FIN0")
+        count = ctrl.get_stop_pulse_count()
+        self.assertEqual(count, 0)
+
+    def test_get_stop_pulse_count_no_match(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        count = ctrl.get_stop_pulse_count()
+        self.assertIsNone(count)
+
+
+class TestAbort(unittest.TestCase):
+    """ExxAB – モーション停止"""
+
+    def test_abort(self):
+        ctrl = make_controller()
+        ctrl.abort()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01AB\r\n")
+
+
+class TestHome(unittest.TestCase):
+    """ExxmDH / ExxmDH? – ホームポジション"""
+
+    def test_set_home(self):
+        ctrl = make_controller()
+        ctrl.set_home(channel=1, position=1000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011DH1000\r\n")
+
+    def test_set_home_negative(self):
+        ctrl = make_controller()
+        ctrl.set_home(channel=2, position=-500)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E012DH-500\r\n")
+
+    def test_get_home(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1000")
+        result = ctrl.get_home(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011DH?\r\n")
+        self.assertEqual(result, 1000)
+
+
+class TestMotionDone(unittest.TestCase):
+    """ExxmMD? – 動作完了ステータス"""
+
+    def test_motion_done_stopped(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1")
+        self.assertTrue(ctrl.is_motion_done(channel=1))
+
+    def test_motion_done_moving(self):
+        ctrl = make_controller()
+        set_response(ctrl, "0")
+        self.assertFalse(ctrl.is_motion_done(channel=1))
+
+
+class TestMoveIndefinite(unittest.TestCase):
+    """ExxmMVn – 無限移動"""
+
+    def test_move_positive(self):
+        ctrl = make_controller()
+        ctrl.move_indefinite(channel=1, direction="+")
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011MV+\r\n")
+
+    def test_move_negative(self):
+        ctrl = make_controller()
+        ctrl.move_indefinite(channel=3, direction="-")
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E013MV-\r\n")
+
+
+class TestIsMoving(unittest.TestCase):
+    """ExxmMV? – 移動状況問い合わせ"""
+
+    def test_is_moving_true(self):
+        ctrl = make_controller()
+        set_response(ctrl, "0")
+        self.assertTrue(ctrl.is_moving(channel=1))
+
+    def test_is_moving_false(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1")
+        self.assertFalse(ctrl.is_moving(channel=1))
+
+
+class TestMoveAbsolute(unittest.TestCase):
+    """ExxmPAnnnn / ExxmPA? – 絶対位置移動"""
+
+    def test_move_absolute(self):
+        ctrl = make_controller()
+        ctrl.move_absolute(channel=1, position=5000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011PA5000\r\n")
+
+    def test_move_absolute_negative(self):
+        ctrl = make_controller()
+        ctrl.move_absolute(channel=2, position=-3000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E012PA-3000\r\n")
+
+    def test_get_target_position(self):
+        ctrl = make_controller()
+        set_response(ctrl, "15400")
+        result = ctrl.get_target_position(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011PA?\r\n")
+        self.assertEqual(result, 15400)
+
+
+class TestMoveRelative(unittest.TestCase):
+    """ExxmPRnnnn / ExxmPR? – 相対位置移動"""
+
+    def test_move_relative(self):
+        ctrl = make_controller()
+        ctrl.move_relative(channel=1, steps=1000)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011PR1000\r\n")
+
+    def test_move_relative_negative(self):
+        ctrl = make_controller()
+        ctrl.move_relative(channel=1, steps=-500)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011PR-500\r\n")
+
+    def test_get_relative_target(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1123")
+        result = ctrl.get_relative_target(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011PR?\r\n")
+        self.assertEqual(result, 1123)
+
+
+class TestStopChannel(unittest.TestCase):
+    """ExxmST – チャンネル動作停止"""
+
+    def test_stop_channel(self):
+        ctrl = make_controller()
+        ctrl.stop_channel(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011ST\r\n")
+
+    def test_stop_channel_4(self):
+        ctrl = make_controller()
+        ctrl.stop_channel(channel=4)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E014ST\r\n")
+
+
+class TestGetPosition(unittest.TestCase):
+    """ExxmTP? – 実位置問い合わせ"""
+
+    def test_get_position(self):
+        ctrl = make_controller()
+        set_response(ctrl, "15400")
+        result = ctrl.get_position(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011TP?\r\n")
+        self.assertEqual(result, 15400)
+
+    def test_get_position_negative(self):
+        ctrl = make_controller()
+        set_response(ctrl, "-200")
+        result = ctrl.get_position(channel=2)
+        self.assertEqual(result, -200)
+
+
+class TestVelocity(unittest.TestCase):
+    """ExxmVAnnnn / ExxmVA? – 速度設定・問い合わせ"""
+
+    def test_set_velocity(self):
+        ctrl = make_controller()
+        ctrl.set_velocity(channel=1, velocity=500)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011VA500\r\n")
+
+    def test_set_velocity_min(self):
+        ctrl = make_controller()
+        ctrl.set_velocity(channel=1, velocity=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011VA1\r\n")
+
+    def test_set_velocity_max(self):
+        ctrl = make_controller()
+        ctrl.set_velocity(channel=1, velocity=1500)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011VA1500\r\n")
+
+    def test_get_velocity(self):
+        ctrl = make_controller()
+        set_response(ctrl, "500")
+        result = ctrl.get_velocity(channel=1)
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E011VA?\r\n")
+        self.assertEqual(result, 500)
+
+
+class TestScanAddresses(unittest.TestCase):
+    """アドレススキャン"""
+
+    def test_scan_addresses(self):
+        ctrl = make_controller()
+        responses = []
+        for addr in range(1, 33):
+            if addr in (1, 3, 5):
+                responses.append(f">E{addr:02d}OK\r\n".encode("ascii"))
+            else:
+                responses.append(b"")
+        ctrl._ser.readline.side_effect = responses
+        found = ctrl.scan_addresses()
+        self.assertEqual(found, [1, 3, 5])
+
+
+class TestWaitUntilDone(unittest.TestCase):
+    """動作完了待ち"""
+
+    def test_wait_already_done(self):
+        ctrl = make_controller()
+        set_response(ctrl, "1")
+        result = ctrl.wait_until_done(channel=1, timeout=1.0)
+        self.assertTrue(result)
+
+    def test_wait_timeout(self):
+        ctrl = make_controller()
+        set_response(ctrl, "0")
+        result = ctrl.wait_until_done(channel=1, poll_interval=0.01, timeout=0.05)
+        self.assertFalse(result)
+
+    def test_wait_becomes_done(self):
+        ctrl = make_controller()
+        ctrl._ser.readline.side_effect = [
+            b"0\r\n",
+            b"0\r\n",
+            b"1\r\n",
+        ]
+        result = ctrl.wait_until_done(channel=1, poll_interval=0.01, timeout=1.0)
+        self.assertTrue(result)
+
+
+class TestSendRaw(unittest.TestCase):
+    """生コマンド送信"""
+
+    def test_send_raw(self):
+        ctrl = make_controller()
+        set_response(ctrl, ">E01OK")
+        result = ctrl.send_raw("E01INF")
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E01INF\r\n")
+        self.assertEqual(result, ">E01OK")
+
+    def test_send_raw_no_response(self):
+        ctrl = make_controller()
+        set_no_response(ctrl)
+        result = ctrl.send_raw("E01AB")
+        self.assertIsNone(result)
+
+
+class TestMultipleAddresses(unittest.TestCase):
+    """複数アドレスのテスト"""
+
+    def test_address_32(self):
+        ctrl = make_controller(address=32)
+        set_response(ctrl, ">E32OK")
+        ctrl.get_firmware_info()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E32INF\r\n")
+
+    def test_address_format_padding(self):
+        ctrl = make_controller(address=5)
+        set_response(ctrl, ">E05OK")
+        ctrl.get_firmware_info()
+        sent = ctrl._ser.write.call_args[0][0]
+        self.assertEqual(sent, b"E05INF\r\n")
+
+
+if __name__ == "__main__":
+    unittest.main()
