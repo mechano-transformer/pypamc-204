@@ -50,13 +50,13 @@ push および Pull Request 時にユニットテストを自動実行し、複�
 
 ### 概要
 
-GitHub Release を作成した際に、パッケージを自動ビルドして PyPI に公開します。
+`v` で始まる git タグ（例: `v0.2.0`）を push した際に、パッケージを自動ビルドして PyPI に公開します。
 
 ### トリガー
 
 | イベント | 条件 |
 |---|---|
-| `release` | `types: [published]`（Release が公開された時） |
+| `push` | `tags: ["v*"]`（`v` で始まるタグが push された時） |
 
 ### 認証方式
 
@@ -97,8 +97,37 @@ OIDC トークンの発行に必要です。この権限がないと Trusted Pub
 
 1. `pyproject.toml` と `src/pypamc204/__init__.py` のバージョンを更新する
 2. 変更をコミット・push する
-3. GitHub 上で Release を作成する（タグ例: `v0.2.0`）
-4. ワークフローが自動で起動し、PyPI に公開される
+
+   ```bash
+   git add pyproject.toml src/pypamc204/__init__.py
+   git commit -m "bump version to 0.2.0"
+   git push
+   ```
+
+3. バージョンに対応する git タグを作成して push する（タグ名と中身のバージョンを揃える）
+
+   ```bash
+   # タグをつけて push すれば publish.yml が回る
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+4. タグ push をトリガーに `publish.yml` が自動で起動し、ビルド → PyPI に公開される
+
+> **注意:** タグ名（`v0.2.0`）と `pyproject.toml` / `__init__.py` のバージョン（`0.2.0`）は必ず一致させてください。PyPI は同一バージョンの再アップロードを拒否するため、やり直す場合はバージョン番号を上げる必要があります。
+
+### タグ push をやり直したいとき
+
+公開前にタグを付け直したい場合（バージョン番号自体は変えない場合のみ）：
+
+```bash
+git push origin :refs/tags/v0.2.0  # リモートのタグを削除
+git tag -d v0.2.0                  # ローカルのタグを削除
+git tag v0.2.0                     # 再度タグを作成
+git push origin v0.2.0             # タグを push（再び publish.yml が起動）
+```
+
+> 既に PyPI へ公開済みのバージョンは、タグを付け直しても上書きできません。その場合はバージョン番号を上げてください。
 
 ---
 
@@ -107,9 +136,11 @@ OIDC トークンの発行に必要です。この権限がないと Trusted Pub
 ```
 push / PR → [test.yml] テスト実行（15パターン）
                 ↓ テスト合格を確認
-          Release 作成
+          バージョン更新 → commit → push
+                ↓
+          git tag v* → git push origin v*
                 ↓
          [publish.yml] PyPI 公開
 ```
 
-テストワークフローは公開ワークフローの前提条件ではありませんが、Release を作成する前に PR のテストが全て合格していることを確認してください。
+テストワークフローは公開ワークフローの前提条件ではありませんが、タグを push する前に PR のテストが全て合格していることを確認してください。
