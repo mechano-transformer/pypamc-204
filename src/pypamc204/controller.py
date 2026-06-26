@@ -27,8 +27,11 @@ VOLTAGE_TABLE = {
     70: 1900,
 }
 
-# チャンネル番号 → コマンド文字の変換テーブル
+# チャンネル番号 → 軸コマンド文字の変換テーブル
 CHANNEL_MAP = {1: "A", 2: "B", 3: "C", 4: "D"}
+
+# 軸コマンド文字 → チャンネル番号の逆引きテーブル
+AXIS_MAP = {"A": 1, "B": 2, "C": 3, "D": 4}
 
 
 def _strip_prompt(text: str) -> str:
@@ -154,6 +157,13 @@ class PAMC204:
         """現在のアドレスをExx形式の文字列で返す"""
         return f"E{self.address:02d}"
 
+    def _strip_address(self, text: str) -> str:
+        """レスポンス先頭のアドレス（Exx）プレフィックスを除去する"""
+        prefix = self._addr()
+        if text.startswith(prefix):
+            return text[len(prefix):]
+        return text
+
     # ── バリデーション ────────────────────────────────────────
 
     @staticmethod
@@ -162,14 +172,43 @@ class PAMC204:
             raise ValueError(f"アドレスはE01〜E32の範囲で指定してください（入力値: {addr}）")
 
     @staticmethod
-    def _validate_channel(ch: int) -> None:
-        if ch not in CHANNEL_MAP:
-            raise ValueError(f"チャンネルは1〜4の範囲で指定してください（入力値: {ch}）")
+    def _normalize_channel(ch: "int | str") -> int:
+        """チャンネル指定を 1〜4 の整数に正規化する。
+
+        整数の 1〜4、または軸文字 ``"A"``〜``"D"``（大文字・小文字どちらも可）を
+        受け付ける。``"A"``=CH1, ``"B"``=CH2, ``"C"``=CH3, ``"D"``=CH4。
+        """
+        # 軸文字 'A'〜'D'（大文字・小文字のみ許可）
+        if isinstance(ch, str):
+            if ch.upper() in AXIS_MAP:
+                return AXIS_MAP[ch.upper()]
+            raise ValueError(
+                f"チャンネルは 1, 2, 3, 4 または 'A', 'B', 'C', 'D' のいずれかで"
+                f"指定してください（入力値: {ch!r}）"
+            )
+        # 整数 1〜4 のみ許可（bool は不可）
+        if isinstance(ch, int) and not isinstance(ch, bool) and ch in CHANNEL_MAP:
+            return ch
+        raise ValueError(
+            f"チャンネルは 1, 2, 3, 4 または 'A', 'B', 'C', 'D' のいずれかで"
+            f"指定してください（入力値: {ch!r}）"
+        )
 
     @staticmethod
     def _validate_frequency(freq: int) -> None:
         if not 1 <= freq <= 1500:
             raise ValueError(f"周波数は1〜1500 Hzの範囲で指定してください（入力値: {freq}）")
+
+    @staticmethod
+    def _validate_acceleration(acceleration: int) -> None:
+        if not (isinstance(acceleration, int) and not isinstance(acceleration, bool)):
+            raise ValueError(
+                f"加速度は整数で指定してください（入力値: {acceleration!r}）"
+            )
+        if not 1 <= acceleration <= 150000:
+            raise ValueError(
+                f"加速度は1〜150000 steps/sec²の範囲で指定してください（入力値: {acceleration}）"
+            )
 
     # ── 1. ExxINF – ファームウェアバージョン確認 ─────────────
     # 構文: ExxINF
@@ -274,7 +313,7 @@ class PAMC204:
 
     def rotate_forward(
         self,
-        channel: int,
+        channel: int | str,
         frequency: int,
         pulses: int = 0,
     ) -> str:
@@ -282,15 +321,15 @@ class PAMC204:
 
         Parameters
         ----------
-        channel : int
-            駆動チャンネル（1〜4）
+        channel : int | str
+            駆動チャンネル。1〜4 または軸文字 'A'〜'D'。
         frequency : int
             駆動周波数（1〜1500 Hz）
         pulses : int
             駆動パルス数。0で連続駆動。
             1〜9999は通常モード、1〜999999は拡張モード。
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._validate_frequency(frequency)
         ch = CHANNEL_MAP[channel]
         cmd = self._build_drive_cmd("NR", frequency, pulses, ch)
@@ -302,7 +341,7 @@ class PAMC204:
 
     def rotate_reverse(
         self,
-        channel: int,
+        channel: int | str,
         frequency: int,
         pulses: int = 0,
     ) -> str:
@@ -310,7 +349,7 @@ class PAMC204:
 
         パラメータは :meth:`rotate_forward` と同じ。
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._validate_frequency(frequency)
         ch = CHANNEL_MAP[channel]
         cmd = self._build_drive_cmd("RR", frequency, pulses, ch)
@@ -361,26 +400,26 @@ class PAMC204:
     # 構文: ExxmDHnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
     # 例:   E011DH1000 → レスポンスなし
 
-    def set_home(self, channel: int, position: int) -> None:
+    def set_home(self, channel: int | str, position: int) -> None:
         """チャンネルのホームポジション（絶対位置）を設定する
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         position : int
             ホームポジション（−2147483648 〜 +2147483647）
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._send(f"{self._addr()}{channel}DH{position}")
 
     # ── 10. ExxmDH? – ホームポジション問い合わせ ─────────────
     # 構文: ExxmDH?  (Exx: E01~E32, m: 1~4)
     # 例:   E011DH? → >1000
 
-    def get_home(self, channel: int) -> int:
+    def get_home(self, channel: int | str) -> int:
         """チャンネルのホームポジションを取得する"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}DH?")
         return int(resp)
 
@@ -388,7 +427,7 @@ class PAMC204:
     # 構文: ExxmMD?  (Exx: E01~E32, m: 1~4)
     # 例:   E011MD? → >1（0:駆動中, 1:停止）
 
-    def is_motion_done(self, channel: int) -> bool:
+    def is_motion_done(self, channel: int | str) -> bool:
         """チャンネルの動作が完了しているか確認する
 
         Returns
@@ -396,7 +435,7 @@ class PAMC204:
         bool
             停止中ならTrue、駆動中ならFalse
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}MD?")
         return resp.strip() == "1"
 
@@ -404,17 +443,17 @@ class PAMC204:
     # 構文: ExxmMVn  (Exx: E01~E32, m: 1~4, n: +/-)
     # 例:   E011MV+ → レスポンスなし
 
-    def move_indefinite(self, channel: int, direction: str) -> None:
+    def move_indefinite(self, channel: int | str, direction: str) -> None:
         """チャンネルのモーターを無限移動させる
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         direction : str
             移動方向。``"+"`` または ``"-"``。
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         if direction not in ("+", "-"):
             raise ValueError(f"方向は '+' または '-' で指定してください（入力値: {direction!r}）")
         self._send(f"{self._addr()}{channel}MV{direction}")
@@ -423,7 +462,7 @@ class PAMC204:
     # 構文: ExxmMV?  (Exx: E01~E32, m: 1~4)
     # 例:   E011MV? → >1（0:駆動中, 1:停止）
 
-    def is_moving(self, channel: int) -> bool:
+    def is_moving(self, channel: int | str) -> bool:
         """チャンネルのモーターが移動中かどうか確認する
 
         Returns
@@ -431,7 +470,7 @@ class PAMC204:
         bool
             移動中ならTrue、停止中ならFalse
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}MV?")
         return resp.strip() == "0"
 
@@ -439,17 +478,17 @@ class PAMC204:
     # 構文: ExxmPAnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
     # 例:   E011PA1000 → レスポンスなし
 
-    def move_absolute(self, channel: int, position: int) -> None:
+    def move_absolute(self, channel: int | str, position: int) -> None:
         """モーターを絶対位置に移動させる
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         position : int
             目標絶対位置（−2147483648 〜 +2147483647）
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._send(f"{self._addr()}{channel}PA{position}")
 
     # ── 15. ExxmPA? – 目標位置問い合わせ ─────────────────────
@@ -457,9 +496,9 @@ class PAMC204:
     # 例:   E011PA? → >15400
     # 駆動中: 目標位置、停止中: 実位置
 
-    def get_target_position(self, channel: int) -> int:
+    def get_target_position(self, channel: int | str) -> int:
         """目標位置を取得する（駆動中: 目標位置、停止中: 実位置）"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}PA?")
         return int(resp)
 
@@ -467,17 +506,17 @@ class PAMC204:
     # 構文: ExxmPRnnnn  (Exx: E01~E32, m: 1~4, nnnn: -2147483648~+2147483647)
     # 例:   E011PR1000 → レスポンスなし
 
-    def move_relative(self, channel: int, steps: int) -> None:
+    def move_relative(self, channel: int | str, steps: int) -> None:
         """現在位置から相対的にモーターを移動させる
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         steps : int
             相対ステップ数（−2147483648 〜 +2147483647）
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._send(f"{self._addr()}{channel}PR{steps}")
 
     # ── 17. ExxmPR? – 相対移動の目標位置問い合わせ ────────────
@@ -485,9 +524,9 @@ class PAMC204:
     # 例:   E011PR? → >15400
     # 駆動中: 目標位置、停止中: 実位置
 
-    def get_relative_target(self, channel: int) -> int:
+    def get_relative_target(self, channel: int | str) -> int:
         """相対移動の目標位置を取得する（駆動中: 目標位置、停止中: 実位置）"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}PR?")
         return int(resp)
 
@@ -495,18 +534,18 @@ class PAMC204:
     # 構文: ExxmST  (Exx: E01~E32, m: 1~4)
     # 例:   E011ST → レスポンスなし
 
-    def stop_channel(self, channel: int) -> None:
+    def stop_channel(self, channel: int | str) -> None:
         """指定チャンネルのモーション停止（レスポンスなし）"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         self._send(f"{self._addr()}{channel}ST")
 
     # ── 19. ExxmTP? – 実位置問い合わせ ──────────────────────
     # 構文: ExxmTP?  (Exx: E01~E32, m: 1~4)
     # 例:   E011TP? → >15400
 
-    def get_position(self, channel: int) -> int:
+    def get_position(self, channel: int | str) -> int:
         """チャンネルの実際の現在位置を取得する"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}TP?")
         return int(resp)
 
@@ -514,17 +553,17 @@ class PAMC204:
     # 構文: ExxmVAnnnn  (Exx: E01~E32, m: 1~4, nnnn: 1~1500)
     # 例:   E011VA1 → レスポンスなし
 
-    def set_velocity(self, channel: int, velocity: int) -> None:
+    def set_velocity(self, channel: int | str, velocity: int) -> None:
         """チャンネルの速度を設定する
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         velocity : int
             速度（1〜1500 steps/sec）
         """
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         if not 1 <= velocity <= 1500:
             raise ValueError(f"速度は1〜1500の範囲で指定してください（入力値: {velocity}）")
         self._send(f"{self._addr()}{channel}VA{velocity}")
@@ -533,11 +572,111 @@ class PAMC204:
     # 構文: ExxmVA?  (Exx: E01~E32, m: 1~4)
     # 例:   E011VA? → >1
 
-    def get_velocity(self, channel: int) -> int:
+    def get_velocity(self, channel: int | str) -> int:
         """チャンネルの現在の速度設定を取得する（steps/sec）"""
-        self._validate_channel(channel)
+        channel = self._normalize_channel(channel)
         resp = self._send_recv(f"{self._addr()}{channel}VA?")
         return int(resp)
+
+    # ── 22. ExxmACnnnn – 加速度設定（F/W Ver.0.2.1以降） ──────
+    # 構文: ExxmACnnnn  (Exx: E01~E32, m: 1~4, nnnn: 1~150000)
+    # 例:   E011AC10000 → レスポンスなし
+    # 加速度設定は MV / PA / PR / ST コマンドに対して有効
+    #（NR / RR / S は加速度設定に非対応）。
+
+    def set_acceleration(self, channel: int | str, acceleration: int) -> None:
+        """チャンネルの加速度を設定する（F/W Ver.0.2.1以降）
+
+        Parameters
+        ----------
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
+        acceleration : int
+            加速度（1〜150000 steps/sec²）
+
+        Notes
+        -----
+        加速度は無限移動（``move_indefinite``）・絶対位置移動（``move_absolute``）・
+        相対移動（``move_relative``）・動作停止（``stop_channel``）に作用します。
+        パルス駆動（``rotate_forward`` / ``rotate_reverse``）および ``stop`` は
+        加速度設定に対応していません。
+        """
+        channel = self._normalize_channel(channel)
+        self._validate_acceleration(acceleration)
+        self._send(f"{self._addr()}{channel}AC{acceleration}")
+
+    # ── 23. ExxmAC? – 加速度問い合わせ（F/W Ver.0.2.1以降） ───
+    # 構文: ExxmAC?  (Exx: E01~E32, m: 1~4)
+    # 例:   E011AC? → >10000
+
+    def get_acceleration(self, channel: int | str) -> int:
+        """チャンネルの現在の加速度設定を取得する（steps/sec²、F/W Ver.0.2.1以降）"""
+        channel = self._normalize_channel(channel)
+        resp = self._send_recv(f"{self._addr()}{channel}AC?")
+        return int(resp)
+
+    # ── 24. ExxST? – 動作状態問い合わせ（F/W Ver.0.1.7以降） ──
+    # 構文: ExxST?  (Exx: E01~E32)
+    # 例:   E01ST? → >E01S（停止）/ >E01NR1500A（正回転中）/ >E01RR1500A（逆回転中）
+
+    def get_drive_status(self) -> str:
+        """ドライバの動作状態を取得する（F/W Ver.0.1.7以降）
+
+        Returns
+        -------
+        str
+            ``"S"``（停止中）、``"NRnnnnz"``（正回転駆動中）、
+            ``"RRnnnnz"``（逆回転駆動中）。先頭のアドレス（``Exx``）は除去して返す。
+            （``nnnn``: 駆動周波数、``z``: 駆動軸 A〜D）
+        """
+        resp = self._send_recv(f"{self._addr()}ST?")
+        return self._strip_address(resp)
+
+    def is_driving(self) -> bool:
+        """ドライバがいずれかの軸を駆動中かどうかを返す（F/W Ver.0.1.7以降）
+
+        Returns
+        -------
+        bool
+            駆動中なら True、停止中（``"S"``）なら False。
+        """
+        return self.get_drive_status().upper() != "S"
+
+    # ── 25. ExxTXFINn – 停止時パルス数送信ON/OFF（F/W Ver.0.1.8以降） ──
+    # 構文: ExxTXFINn  (Exx: E01~E32, n: 0=OFF, ≠0=ON)
+    # 例:   E01TXFIN1 → >E01OK
+
+    def set_txfin(self, enabled: bool) -> str:
+        """連続駆動停止時（``stop()`` / ``ExxS``）のパルス数送信ON/OFFを設定する
+        （F/W Ver.0.1.8以降）
+
+        Parameters
+        ----------
+        enabled : bool
+            ``True``: 停止時に ``FIN<パルス数>`` を送信する（既定動作）。
+            ``False``: 送信しない。
+
+        .. warning::
+            ``False`` に設定すると ``stop()`` がレスポンスを返さなくなるため、
+            ``stop()`` / ``get_stop_pulse_count()`` は ``TimeoutError`` になります。
+        """
+        n = 1 if enabled else 0
+        return self._send_recv(f"{self._addr()}TXFIN{n}")
+
+    # ── 26. ExxSNO? – シリアルナンバー問い合わせ ──
+    # 構文: ExxSNO?  (Exx: E01~E32)
+    # 例:   E01SNO? → >E0110001
+
+    def get_serial_number(self) -> str:
+        """ドライバのシリアルナンバーを取得する
+
+        Returns
+        -------
+        str
+            シリアルナンバー文字列。先頭のアドレス（``Exx``）は除去して返す。
+        """
+        resp = self._send_recv(f"{self._addr()}SNO?")
+        return self._strip_address(resp)
 
     # ── 便利メソッド ─────────────────────────────────────────
 
@@ -551,7 +690,7 @@ class PAMC204:
 
     def wait_until_done(
         self,
-        channel: int,
+        channel: int | str,
         poll_interval: float = 0.1,
         timeout: Optional[float] = None,
     ) -> bool:
@@ -559,8 +698,8 @@ class PAMC204:
 
         Parameters
         ----------
-        channel : int
-            チャンネル（1〜4）
+        channel : int | str
+            チャンネル。1〜4 または軸文字 'A'〜'D'。
         poll_interval : float
             ステータス確認の間隔（秒）
         timeout : float, optional
@@ -583,3 +722,38 @@ class PAMC204:
         """生のコマンド文字列を送信し、レスポンスを返す（'>'プレフィックスは除去済み）"""
         self._send(command)
         return self._recv()
+
+    # ── 4チャンネル一括操作 ───────────────────────────────────
+    # libpamc-204 の *_all_channels API 相当。CH1〜CH4 へ順次コマンドを送信する。
+
+    def move_relative_all(self, steps: int) -> None:
+        """全チャンネル（CH1〜CH4）を同じ相対量だけ移動させる（応答なし）"""
+        for ch in (1, 2, 3, 4):
+            self.move_relative(ch, steps)
+
+    def move_indefinite_all(self, direction: str) -> None:
+        """全チャンネル（CH1〜CH4）を同じ方向に無限移動させる（応答なし）"""
+        for ch in (1, 2, 3, 4):
+            self.move_indefinite(ch, direction)
+
+    def stop_all(self) -> None:
+        """全チャンネル（CH1〜CH4）を個別に動作停止させる（ExxmST、応答なし）
+
+        全軸即時停止には :meth:`abort`（ExxAB）を使用してください。
+        """
+        for ch in (1, 2, 3, 4):
+            self.stop_channel(ch)
+
+    def get_position_all(self) -> list[int]:
+        """全チャンネルの実位置を取得する（``[CH1, CH2, CH3, CH4]``）"""
+        return [self.get_position(ch) for ch in (1, 2, 3, 4)]
+
+    def get_motion_done_all(self) -> list[bool]:
+        """全チャンネルの動作完了ステータスを取得する
+
+        Returns
+        -------
+        list[bool]
+            ``[CH1, CH2, CH3, CH4]``。各要素は停止中なら True、駆動中なら False。
+        """
+        return [self.is_motion_done(ch) for ch in (1, 2, 3, 4)]
