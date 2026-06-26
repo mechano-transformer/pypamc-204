@@ -89,9 +89,11 @@ push および Pull Request 時にユニットテストを自動実行し、複�
 ```yaml
 permissions:
   id-token: write
+  contents: read
 ```
 
-OIDC トークンの発行に必要です。この権限がないと Trusted Publisher 認証が失敗します。
+- `id-token: write` — OIDC トークンの発行に必要です。この権限がないと Trusted Publisher 認証が失敗します。
+- `contents: read` — `actions/checkout` がリポジトリを取得するために必要です。`permissions:` を明示すると未指定のスコープはすべて `none` になるため、これを省略すると checkout が `remote: Repository not found`（実体は権限不足）で失敗します。
 
 ### リリース手順
 
