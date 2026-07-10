@@ -89,8 +89,8 @@ deactivate
 ```python
 from pypamc204 import PAMC204
 
-# コントローラに接続（アドレス1がデフォルト）
-with PAMC204("COM3") as ctrl:
+# コントローラに接続（ポートは自動検出、アドレス1がデフォルト）
+with PAMC204() as ctrl:
     # ファームウェアバージョン確認
     print(ctrl.get_firmware_info())
 
@@ -111,18 +111,29 @@ with PAMC204("COM3") as ctrl:
 
 ### 接続
 
-```python
-from pypamc204 import PAMC204
+ポート名を省略すると、USBのVID/PID（FTDI FT230X: `0403:6015`）が一致する
+シリアルポートを自動検出します。ポート名の明示指定も可能です。
 
-# context manager（推奨）
+```python
+from pypamc204 import PAMC204, find_port
+
+# context manager（推奨）。ポート自動検出
+with PAMC204(address=1) as ctrl:
+    ...
+
+# ポート名を明示指定（自動検出をスキップ）
 with PAMC204("COM3", address=1) as ctrl:
     ...
 
 # 手動で接続管理
-ctrl = PAMC204("COM3")
+ctrl = PAMC204()
 ctrl.open()
+print(ctrl.port)  # 実際に使用中のポート（例: "COM3", "/dev/ttyUSB0"）
 # ... 操作 ...
 ctrl.close()
+
+# 検出だけ行うことも可能（見つからない/複数候補の場合は ConnectionError）
+port = find_port()
 ```
 
 ### アドレス（E01〜E32）の指定方法

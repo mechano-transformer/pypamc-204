@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch, PropertyMock
 
 import serial
 
-from pypamc204 import PAMC204
+from pypamc204 import PAMC204, find_port
 from pypamc204.controller import _strip_prompt
 from pypamc204.exceptions import (
     BusyError,
@@ -908,6 +908,74 @@ class TestMultipleAddresses(unittest.TestCase):
         ctrl.set_voltage(100)
         sent = ctrl._ser.write.call_args[0][0]
         self.assertEqual(sent, b"E05DAC2700\r\n")
+
+
+class TestFindPort(unittest.TestCase):
+    """ポート自動検出（find_port）"""
+
+    @staticmethod
+    def _mock_port(device, vid, pid):
+        p = MagicMock()
+        p.device = device
+        p.vid = vid
+        p.pid = pid
+        return p
+
+    def test_single_match(self):
+        ports = [
+            self._mock_port("/dev/ttyS0", None, None),
+            self._mock_port("/dev/ttyUSB0", 0x0403, 0x6015),
+        ]
+        with patch("pypamc204.controller.list_ports.comports", return_value=ports):
+            self.assertEqual(find_port(), "/dev/ttyUSB0")
+
+    def test_no_match_raises(self):
+        with patch("pypamc204.controller.list_ports.comports", return_value=[]):
+            with self.assertRaises(ConnectionError):
+                find_port()
+
+    def test_multiple_matches_raises(self):
+        ports = [
+            self._mock_port("COM3", 0x0403, 0x6015),
+            self._mock_port("COM4", 0x0403, 0x6015),
+        ]
+        with patch("pypamc204.controller.list_ports.comports", return_value=ports):
+            with self.assertRaises(ConnectionError):
+                find_port()
+
+    def test_custom_vid_pid(self):
+        ports = [self._mock_port("COM5", 0x1234, 0x5678)]
+        with patch("pypamc204.controller.list_ports.comports", return_value=ports):
+            self.assertEqual(find_port(vid=0x1234, pid=0x5678), "COM5")
+
+
+class TestAutoDetectOpen(unittest.TestCase):
+    """port省略時の自動検出オープン"""
+
+    def test_open_without_port_uses_find_port(self):
+        with patch("pypamc204.controller.find_port", return_value="COM7") as mock_find, \
+                patch("pypamc204.controller.serial.Serial") as mock_serial:
+            ctrl = PAMC204()
+            ctrl.open()
+            mock_find.assert_called_once()
+            self.assertEqual(mock_serial.call_args.kwargs["port"], "COM7")
+
+    def test_open_with_explicit_port_skips_detection(self):
+        with patch("pypamc204.controller.find_port") as mock_find, \
+                patch("pypamc204.controller.serial.Serial") as mock_serial:
+            ctrl = PAMC204("COM3")
+            ctrl.open()
+            mock_find.assert_not_called()
+            self.assertEqual(mock_serial.call_args.kwargs["port"], "COM3")
+
+    def test_open_propagates_detection_error(self):
+        with patch(
+            "pypamc204.controller.find_port",
+            side_effect=ConnectionError("not found"),
+        ):
+            ctrl = PAMC204()
+            with self.assertRaises(ConnectionError):
+                ctrl.open()
 
 
 if __name__ == "__main__":

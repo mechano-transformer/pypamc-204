@@ -91,8 +91,8 @@ deactivate
 ```python
 from pypamc204 import PAMC204
 
-# Connect to the controller (address 1 is the default)
-with PAMC204("COM3") as ctrl:
+# Connect to the controller (the port is auto-detected; address 1 is the default)
+with PAMC204() as ctrl:
     # Check the firmware version
     print(ctrl.get_firmware_info())
 
@@ -113,18 +113,30 @@ with PAMC204("COM3") as ctrl:
 
 ### Connecting
 
-```python
-from pypamc204 import PAMC204
+When the port name is omitted, the serial port is auto-detected by matching
+the USB VID/PID (FTDI FT230X: `0403:6015`). The port name can also be
+specified explicitly.
 
-# Context manager (recommended)
+```python
+from pypamc204 import PAMC204, find_port
+
+# Context manager (recommended), with port auto-detection
+with PAMC204(address=1) as ctrl:
+    ...
+
+# Specify the port explicitly (skips auto-detection)
 with PAMC204("COM3", address=1) as ctrl:
     ...
 
 # Manual connection management
-ctrl = PAMC204("COM3")
+ctrl = PAMC204()
 ctrl.open()
+print(ctrl.port)  # the port actually in use (e.g. "COM3", "/dev/ttyUSB0")
 # ... operations ...
 ctrl.close()
+
+# Detection only (raises ConnectionError if none or multiple candidates)
+port = find_port()
 ```
 
 ### Specifying the address (E01–E32)

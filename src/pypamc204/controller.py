@@ -5,6 +5,7 @@ import time
 from typing import Optional
 
 import serial
+from serial.tools import list_ports
 
 from .exceptions import (
     BusyError,
@@ -13,6 +14,10 @@ from .exceptions import (
     TimeoutError,
     ValueRangeError,
 )
+
+# USBシリアル変換チップのVID/PID（FTDI FT230X）
+USB_VID = 0x0403
+USB_PID = 0x6015
 
 # 電圧(V) → DAC値の変換テーブル
 VOLTAGE_TABLE = {
@@ -41,13 +46,53 @@ def _strip_prompt(text: str) -> str:
     return text
 
 
+def find_port(vid: int = USB_VID, pid: int = USB_PID) -> str:
+    """接続されているコントローラのシリアルポートを自動検出する
+
+    USBシリアルポートを列挙し、VID/PIDが一致するポートを返す。
+    WindowsでもLinuxでも動作する（例: ``"COM3"``、``"/dev/ttyUSB0"``）。
+
+    Parameters
+    ----------
+    vid : int
+        USBベンダーID。デフォルトは0x0403（FTDI）。
+    pid : int
+        USBプロダクトID。デフォルトは0x6015（FT230X）。
+
+    Returns
+    -------
+    str
+        検出されたポート名
+
+    Raises
+    ------
+    ConnectionError
+        デバイスが見つからない場合、または複数見つかり特定できない場合
+    """
+    candidates = sorted(
+        p.device for p in list_ports.comports() if p.vid == vid and p.pid == pid
+    )
+    if not candidates:
+        raise ConnectionError(
+            f"コントローラが見つかりません（VID=0x{vid:04X}, PID=0x{pid:04X}）。"
+            "USB接続を確認するか、port引数でポート名を指定してください。"
+        )
+    if len(candidates) > 1:
+        raise ConnectionError(
+            f"候補ポートが複数見つかりました: {', '.join(candidates)}。"
+            "port引数でポート名を指定してください。"
+        )
+    return candidates[0]
+
+
 class PAMC204:
     """PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラのドライバクラス
 
     Parameters
     ----------
-    port : str
-        シリアルポート名（例: ``"COM3"``、``"/dev/ttyUSB0"``）
+    port : str, optional
+        シリアルポート名（例: ``"COM3"``、``"/dev/ttyUSB0"``）。
+        省略時は :func:`find_port` によりUSB VID/PIDから自動検出する。
     address : int
         ドライバアドレス（E01〜E32）。デフォルトはE01。
     timeout : float
@@ -56,7 +101,7 @@ class PAMC204:
 
     def __init__(
         self,
-        port: str,
+        port: Optional[str] = None,
         address: int = 1,
         timeout: float = 1.0,
     ) -> None:
@@ -68,11 +113,19 @@ class PAMC204:
 
     # ── 接続管理 ───────────────────────────────────────────────
 
+    @property
+    def port(self) -> Optional[str]:
+        """使用中のポート名（port未指定かつ未接続の場合はNone）"""
+        if self._ser is not None:
+            return self._ser.port
+        return self._port
+
     def open(self) -> None:
-        """シリアル接続を開く"""
+        """シリアル接続を開く（port未指定の場合は自動検出する）"""
+        port = self._port if self._port is not None else find_port()
         try:
             self._ser = serial.Serial(
-                port=self._port,
+                port=port,
                 baudrate=115200,
                 bytesize=serial.EIGHTBITS,
                 parity=serial.PARITY_NONE,
@@ -80,7 +133,7 @@ class PAMC204:
                 timeout=self.timeout,
             )
         except serial.SerialException as e:
-            raise ConnectionError(f"{self._port} のオープンに失敗: {e}") from e
+            raise ConnectionError(f"{port} のオープンに失敗: {e}") from e
 
     def close(self) -> None:
         """シリアル接続を閉じる"""
