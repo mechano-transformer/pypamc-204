@@ -1,0 +1,38 @@
+﻿#	コマンド	結果	判定
+1	get_firmware_info()	PAMC-204 Ver:0.2.1(115200bps)	○
+2	ping()	True	○
+3	scan_addresses()	[1]	○
+4	set_address()	OK	○
+5	set_voltage()	E01OK	○
+6	set_voltage_raw()	E01OK	○
+7	rotate_forward()	E01OK / 完了通知: E01FIN	○
+8	rotate_reverse()	E01OK / 完了通知: E01FIN	○
+9	stop()	E01FIN155（連続駆動0.5秒→停止。※要TXFIN=ON）	○
+10	get_stop_pulse_count()	153（連続駆動0.5秒→停止しパルス数取得）	○
+11	abort()	駆動中に送信(応答なし) → 停止確認 MD?=1(停止)	○
+12	stop_channel()	駆動中に送信(応答なし) → 停止確認 MD?=1(停止)	○
+13	set_home()	DH1000設定 → DH?=1000（一致）	○
+14	get_home()	0	○
+15	set_velocity()	VA500設定 → VA?=500（一致）	○
+16	get_velocity()	500	○
+17	move_absolute()	0 → 目標200 → 実位置200	○
+18	get_target_position()	200	○
+19	move_relative()	200 → -200 → 実位置0	○
+20	get_relative_target()	0	○
+21	move_indefinite()	MV+送信(応答なし) → 移動中確認 MV?=移動中	○
+22	is_moving()	True（無限移動中に取得）	○
+23	is_motion_done()	True	○
+24	wait_until_done()	True（0.35秒で完了）	○
+25	get_position()	205	○
+26	set_acceleration()	AC10000設定 → AC?=10000（一致）	○
+27	get_acceleration()	10000	○
+28	get_drive_status()	停止時=S / 駆動中=NR0300A	○
+29	is_driving()	True（連続駆動中に取得）	○
+30	set_txfin()	E01OK	○
+31	get_serial_number()	10000	○
+32	move_relative_all()	[308, 0, 0, 0] → +100 → [408, 0, 0, 0]	○
+33	move_indefinite_all()	全CHにMV+送信(応答なし) → 0.3秒駆動	○
+34	stop_all()	全CHにST送信(応答なし) → 停止確認 MD?=[True, True, True, True]	○
+35	get_position_all()	[561, 0, 0, 0]	○
+36	get_motion_done_all()	[True, True, True, True]	○
+37	send_raw()	E0110000	○
