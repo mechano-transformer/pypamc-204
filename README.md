@@ -1,4 +1,4 @@
-# pypamc_204
+# pypamc_204 / pypamc_204a
 
 [![PyPI](https://img.shields.io/pypi/v/pypamc-204)](https://pypi.org/project/pypamc-204/)
 [![Python](https://img.shields.io/pypi/pyversions/pypamc-204)](https://pypi.org/project/pypamc-204/)
