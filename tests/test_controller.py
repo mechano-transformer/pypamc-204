@@ -852,7 +852,7 @@ class TestSerialNumber(unittest.TestCase):
 
 
 class TestAllChannels(unittest.TestCase):
-    """4チャンネル一括操作（libpamc-204 *_all_channels 相当）"""
+    """4チャンネル一括操作（libpamc-204 / libpamc-204A *_all_channels 相当）"""
 
     def _sent_list(self, ctrl):
         return [c[0][0] for c in ctrl._ser.write.call_args_list]

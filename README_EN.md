@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/pypamc-204)](https://pypi.org/project/pypamc-204/)
 [![Tests](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml/badge.svg)](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml)
 
-Python library for the PAMC-204 / PAMC-204-RJ piezo-assisted motor controller.
+Python library for the PAMC-204 / PAMC-204A / PAMC-204-RJ piezo-assisted motor controller.
 
 > 日本語版は [README.md](README.md) を参照してください。
 
@@ -141,7 +141,7 @@ port = find_port()
 
 ### Specifying the address (E01–E32)
 
-The PAMC-204 can be daisy-chained over RS-485, so each driver has a
+The PAMC-204 / PAMC-204A can be daisy-chained over RS-485, so each driver has a
 **unique address in the range E01–E32**. Every command is prefixed with this
 address (`Exx`) when sent (e.g. `E01DAC2700`, `E05NR...`).
 
@@ -230,7 +230,7 @@ raises `ValueError`.
 
 ### About command responses
 
-The PAMC-204 has **commands that return a response and commands that do not**,
+The PAMC-204 / PAMC-204A has **commands that return a response and commands that do not**,
 and this library distinguishes them per method (following the device manual).
 
 - **Returns a response:** `ping()` / `set_address()` / `set_voltage()` /
@@ -363,7 +363,7 @@ channel stop (`stop_channel`).
 **Not supported:** pulse drive (`rotate_forward` / `rotate_reverse`) and
 continuous-drive stop (`stop`).
 
-> **Note:** This command is available only on PAMC-204 firmware **Ver.0.2.1 and
+> **Note:** This command is available only on PAMC-204 / PAMC-204A firmware **Ver.0.2.1 and
 > later**. Out-of-range values (0, 150001, decimals, etc.) or non-integers raise
 > `ValueError`.
 
@@ -410,7 +410,7 @@ with PAMC204("COM3") as ctrl:
 ### Operating on all four channels
 
 Utilities that send a command to CH1–CH4 in sequence (equivalent to the
-`*_all_channels` API in libpamc-204). The PAMC-204 drives one axis at a time, so
+`*_all_channels` API in libpamc-204 / libpamc-204A). The PAMC-204 / PAMC-204A drives one axis at a time, so
 these run sequentially internally as well.
 
 ```python

@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/pypamc-204)](https://pypi.org/project/pypamc-204/)
 [![テスト](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml/badge.svg)](https://github.com/mechano-transformer/pypamc-204/actions/workflows/test.yml)
 
-PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラ用 Python ライブラリ
+PAMC-204 / PAMC-204A / PAMC-204-RJ ピエゾアシストモーターコントローラ用 Python ライブラリ
 
 - **PyPI:** https://pypi.org/project/pypamc-204/
 - **GitHub:** https://github.com/mechano-transformer/pypamc-204
@@ -138,7 +138,7 @@ port = find_port()
 
 ### アドレス（E01〜E32）の指定方法
 
-PAMC-204 は RS-485 で複数台をデイジーチェーン接続できるため、各ドライバは
+PAMC-204 / PAMC-204A は RS-485 で複数台をデイジーチェーン接続できるため、各ドライバは
 **E01〜E32 の固有アドレス**を持ちます。コマンドはすべてこのアドレス（`Exx`）を
 先頭に付けて送信されます（例: `E01DAC2700`、`E05NR...`）。
 
@@ -224,7 +224,7 @@ with PAMC204("COM3", address=1) as ctrl:
 
 ### コマンドの応答有無について
 
-PAMC-204 には**応答を返すコマンドと返さないコマンド**があり、本ライブラリは
+PAMC-204 / PAMC-204A には**応答を返すコマンドと返さないコマンド**があり、本ライブラリは
 これをメソッド単位で正しく区別しています（実機マニュアル準拠）。
 
 - **応答あり**: `ping()` / `set_address()` / `set_voltage()` / `rotate_forward()` /
@@ -353,7 +353,7 @@ with PAMC204("COM3") as ctrl:
 相対移動（`move_relative`）/ 動作停止（`stop_channel`）。
 **非対応:** パルス駆動（`rotate_forward` / `rotate_reverse`）と連続駆動停止（`stop`）。
 
-> **注意:** 本コマンドは PAMC-204 ファームウェア **Ver.0.2.1 以降**でのみ利用できます。
+> **注意:** 本コマンドは PAMC-204 / PAMC-204A ファームウェア **Ver.0.2.1 以降**でのみ利用できます。
 > 範囲外（0 や 150001、小数など）や非整数を指定すると `ValueError` になります。
 
 ### ステータス問い合わせ
@@ -398,8 +398,8 @@ with PAMC204("COM3") as ctrl:
 
 ### 4チャンネル一括操作
 
-CH1〜CH4 へ順次コマンドを送信するユーティリティです（libpamc-204 の
-`*_all_channels` API 相当）。PAMC-204 は同時に1軸ずつ駆動するため、内部でも順次実行されます。
+CH1〜CH4 へ順次コマンドを送信するユーティリティです（libpamc-204 / libpamc-204A の
+`*_all_channels` API 相当）。PAMC-204 / PAMC-204A は同時に1軸ずつ駆動するため、内部でも順次実行されます。
 
 ```python
 with PAMC204("COM3") as ctrl:

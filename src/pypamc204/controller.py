@@ -86,7 +86,7 @@ def find_port(vid: int = USB_VID, pid: int = USB_PID) -> str:
 
 
 class PAMC204:
-    """PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラのドライバクラス
+    """PAMC-204 / PAMC-204A / PAMC-204-RJ ピエゾアシストモーターコントローラのドライバクラス
 
     Parameters
     ----------
@@ -777,7 +777,7 @@ class PAMC204:
         return self._recv()
 
     # ── 4チャンネル一括操作 ───────────────────────────────────
-    # libpamc-204 の *_all_channels API 相当。CH1〜CH4 へ順次コマンドを送信する。
+    # libpamc-204 / libpamc-204A の *_all_channels API 相当。CH1〜CH4 へ順次コマンドを送信する。
 
     def move_relative_all(self, steps: int) -> None:
         """全チャンネル（CH1〜CH4）を同じ相対量だけ移動させる（応答なし）"""

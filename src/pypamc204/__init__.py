@@ -1,4 +1,4 @@
-"""pypamc204 – PAMC-204 / PAMC-204-RJ ピエゾアシストモーターコントローラ用Pythonライブラリ"""
+"""pypamc204 – PAMC-204 / PAMC-204A / PAMC-204-RJ ピエゾアシストモーターコントローラ用Pythonライブラリ"""
 
 from .controller import PAMC204, CHANNEL_MAP, VOLTAGE_TABLE, find_port
 from .exceptions import (

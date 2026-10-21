@@ -1,5 +1,5 @@
 class PAMC204Error(Exception):
-    """PAMC-204通信エラーの基底クラス"""
+    """PAMC-204 / PAMC-204A 通信エラーの基底クラス"""
 
 
 class ConnectionError(PAMC204Error):

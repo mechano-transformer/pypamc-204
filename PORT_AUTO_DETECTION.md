@@ -10,7 +10,7 @@
 
 1. pyserial の `serial.tools.list_ports.comports()` で全シリアルポートを列挙する
    （Windows は SetupAPI、Linux は sysfs 経由。外部コマンドへの依存なし）
-2. 各ポートのUSB VID/PID を既定値 `0x0403:0x6015`（FTDI FT230X = PAMC-204 搭載チップ）と照合する
+2. 各ポートのUSB VID/PID を既定値 `0x0403:0x6015`（FTDI FT230X = PAMC-204 / PAMC-204A 搭載チップ）と照合する
 3. 結果に応じて以下のように動作する
 
 | 一致件数 | 動作 |
@@ -31,7 +31,7 @@ VID/PID が異なる個体には `find_port(vid=..., pid=...)` で対応でき�
 確実性の高い順。
 
 1. **カスタムPIDの書き込み（推奨）**
-   FT230X の EEPROM に FTDI 提供ツール（FT_PROG）で PAMC-204 専用の PID を書き込む。
+   FT230X の EEPROM に FTDI 提供ツール（FT_PROG）で PAMC-204 / PAMC-204A 専用の PID を書き込む。
    汎用IDとの衝突が根本的になくなる。ライブラリ側は `USB_PID` 定数の変更のみで対応可能。
 2. **接続後の機種確認（プローブ方式）**
    候補ポートを open して `INF` コマンドを送り、レスポンスに `PAMC` が含まれるか検証する。
